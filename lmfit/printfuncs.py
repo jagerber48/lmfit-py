@@ -28,7 +28,7 @@ def getfloat_attr(obj, attr, length=11):
     if isinstance(val, int):
         return f'{val}'
     if isinstance(val, float):
-        return f"{val:.4f}"
+        return gformat(val, length=length).strip()
     return repr(val)
 
 
