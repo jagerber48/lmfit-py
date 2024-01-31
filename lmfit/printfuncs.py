@@ -4,8 +4,8 @@ from math import log10
 import re
 
 import numpy as np
+from sciform import Formatter
 from tabulate import tabulate
-from uncertainties import ufloat
 
 try:
     import numdifftools  # noqa: F401
@@ -22,13 +22,14 @@ def alphanumeric_sort(s, _nsre=re.compile('([0-9]+)')):
 
 def getfloat_attr(obj, attr, length=11):
     """Format an attribute of an object for printing."""
+    float_formatter = Formatter(exp_mode="fixed_point", ndigits=4)
     val = getattr(obj, attr, None)
     if val is None:
         return 'unknown'
     if isinstance(val, int):
         return f'{val}'
     if isinstance(val, float):
-        return f"{val:.4f}"
+        return float_formatter(val)
     return repr(val)
 
 
@@ -183,6 +184,7 @@ def fit_report(inpars, modelpars=None, show_correl=True, min_correl=0.1,
                 add("    `pip install numdifftools` for lmfit to estimate uncertainties")
                 add("    with this fitting method.")
 
+    val_unc_formatter = Formatter(exp_mode="fixed_pointfit", ndigits=2, superscript=True)
     var_data = []
     add("[[Variables]]")
     for name in parnames:
@@ -213,7 +215,7 @@ def fit_report(inpars, modelpars=None, show_correl=True, min_correl=0.1,
         else:
             stderr = par.stderr
             if stderr is not None:
-                single_var_data["Value"] = f"{ufloat(val, stderr):.2ue}"
+                single_var_data["Value"] = val_unc_formatter(val, stderr)
                 try:
                     single_var_data[
                         "Percent Uncertainty"] = f'{abs(par.stderr / par.value):.2%}'
