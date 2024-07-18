@@ -4,6 +4,8 @@ from math import log10
 import re
 
 import numpy as np
+from tabulate import tabulate
+from uncertainties import ufloat
 
 try:
     import numdifftools  # noqa: F401
@@ -81,6 +83,13 @@ def gformat(val, length=11):
     return f'{val:{length}.{prec}{form}}'
 
 
+def indent_string_block(string_block, depth=4):
+    indent = " "*depth
+    string_block = f"{indent}{string_block}"
+    string_block = string_block.replace("\n", f"\n{indent}")
+    return string_block
+
+
 def fit_report(inpars, modelpars=None, show_correl=True, min_correl=0.1,
                sort_pars=False, correl_mode='list'):
     """Generate a report of the fitting results.
@@ -139,16 +148,23 @@ def fit_report(inpars, modelpars=None, show_correl=True, min_correl=0.1,
     namelen = max(len(n) for n in parnames)
     if result is not None:
         add("[[Fit Statistics]]")
-        add(f"    # fitting method   = {result.method}")
-        add(f"    # function evals   = {getfloat_attr(result, 'nfev')}")
-        add(f"    # data points      = {getfloat_attr(result, 'ndata')}")
-        add(f"    # variables        = {getfloat_attr(result, 'nvarys')}")
-        add(f"    chi-square         = {getfloat_attr(result, 'chisqr')}")
-        add(f"    reduced chi-square = {getfloat_attr(result, 'redchi')}")
-        add(f"    Akaike info crit   = {getfloat_attr(result, 'aic')}")
-        add(f"    Bayesian info crit = {getfloat_attr(result, 'bic')}")
+        fit_stats_data = [
+            ["# fitting method", result.method],
+            ["# function evals", getfloat_attr(result, 'nfev')],
+            ["# data points", getfloat_attr(result, 'ndata')],
+            ["# variables", getfloat_attr(result, 'nvarys')],
+            ["chi-square", getfloat_attr(result, 'chisqr')],
+            ["reduced chi-square", getfloat_attr(result, 'redchi')],
+            ["Akaike info crit", getfloat_attr(result, 'aic')],
+            ["Bayesian info crit", getfloat_attr(result, 'bic')],
+        ]
         if hasattr(result, 'rsquared'):
-            add(f"    R-squared          = {getfloat_attr(result, 'rsquared')}")
+            fit_stats_data.append(["R-squared", getfloat_attr(result, 'rsquared')])
+
+        fit_stats_table = tabulate(fit_stats_data, disable_numparse=True)
+        fit_stats_table = indent_string_block(fit_stats_table)
+        add(fit_stats_table)
+
         if not result.errorbars:
             add("##  Warning: uncertainties could not be estimated:")
             if result.method in ('leastsq', 'least_squares') or HAS_NUMDIFFTOOLS:
@@ -167,39 +183,65 @@ def fit_report(inpars, modelpars=None, show_correl=True, min_correl=0.1,
                 add("    `pip install numdifftools` for lmfit to estimate uncertainties")
                 add("    with this fitting method.")
 
+    var_data = []
     add("[[Variables]]")
     for name in parnames:
+        single_var_data = {
+            "Name": None,
+            "Value": None,
+            "Percent Uncertainty": None,
+            "Constraint": None,
+            "Init Val": None,
+            "Model Val": None,
+        }
         par = params[name]
-        space = ' '*(namelen-len(name))
-        nout = f"{name}:{space}"
-        inval = '(init = ?)'
+        single_var_data["Name"] = name
+
         if par.init_value is not None:
-            inval = f'(init = {par.init_value:.7g})'
+            single_var_data["Init Val"] = f"{par.init_value:.7g}"
+        else:
+            single_var_data["Init Val"] = ""
+
         if modelpars is not None and name in modelpars:
-            inval = f'{inval}, model_value = {modelpars[name].value:.7g}'
-        try:
-            sval = gformat(par.value)
-        except (TypeError, ValueError):
-            sval = ' Non Numeric Value?'
-        if par.stderr is not None:
-            serr = gformat(par.stderr)
-            try:
-                spercent = f'({abs(par.stderr/par.value):.2%})'
-            except ZeroDivisionError:
-                spercent = ''
-            sval = f'{sval} +/-{serr} {spercent}'
+            single_var_data["Model Val"] = f"{modelpars[name].value:.7g}"
+        else:
+            single_var_data["Model Val"] = ""
+
+        val = par.value
+        if not isinstance(val, (int, float)):
+            single_var_data["Value"] = "Non Numeric Value?"
+        else:
+            stderr = par.stderr
+            if stderr is not None:
+                single_var_data["Value"] = f"{ufloat(val, stderr):.2ue}"
+                try:
+                    single_var_data[
+                        "Percent Uncertainty"] = f'{abs(par.stderr / par.value):.2%}'
+                except ZeroDivisionError:
+                    single_var_data["Percent Uncertainty"] = ""
+            else:
+                single_var_data["Value"] = f"{val:.7g}"
+                single_var_data["Percent Uncertainty"] = ""
 
         if par.vary:
-            add(f"    {nout} {sval} {inval}")
+            single_var_data["Constraint"] = "Vary"
         elif par.expr is not None:
-            add(f"    {nout} {sval} == '{par.expr}'")
+            single_var_data["Constraint"] = par.expr
         else:
-            add(f"    {nout} {par.value: .7g} (fixed)")
+            single_var_data["Constraint"] = "Fixed"
+
+        var_data.append(single_var_data)
+
+    var_table = tabulate(var_data, headers="keys", tablefmt="simple", numalign="center",
+                         stralign="center", disable_numparse=True)
+    var_table = indent_string_block(var_table)
+    add(var_table)
 
     if show_correl and correl_mode.startswith('tab'):
         add('[[Correlations]] ')
-        for line in correl_table(params).split('\n'):
-            buff.append('  %s' % line)
+        correl_table_str = correl_table(params)
+        correl_table_str = indent_string_block(correl_table_str)
+        add(correl_table_str)
     elif show_correl:
         correls = {}
         for i, name in enumerate(parnames):
@@ -313,39 +355,27 @@ def fitreport_html_table(result, show_correl=True, min_correl=0.1):
 
 
 def correl_table(params):
-    """Return a printable correlation table for a Parameters object."""
     varnames = [vname for vname in params if params[vname].vary]
-    nwid = max(8, max([len(vname) for vname in varnames])) + 1
 
-    def sfmt(a):
-        return f" {a:{nwid}s}"
+    correl_data = []
 
-    def ffmt(a):
-        return sfmt(f"{a:+.4f}")
-
-    title = ['', sfmt('Variable')]
-    title.extend([sfmt(vname) for vname in varnames])
-
-    title = '|'.join(title) + '|'
-    bar = [''] + ['-'*(nwid+1) for i in range(len(varnames)+1)] + ['']
-    bar = '+'.join(bar)
-
-    buff = [bar, title, bar]
-
-    for vname, par in params.items():
-        if not par.vary:
-            continue
-        line = ['', sfmt(vname)]
+    for vname in varnames:
+        var_data_dict = dict.fromkeys([""] + varnames)
+        var_data_dict[""] = vname
+        par = params[vname]
         for vother in varnames:
+
             if vother == vname:
-                line.append(ffmt(1))
+                var_data_dict[vother] = f"{1.0:+.4f}"
             elif vother in par.correl:
-                line.append(ffmt(par.correl[vother]))
+                var_data_dict[vother] = f"{par.correl[vother]:+.4f}"
             else:
-                line.append('unknown')
-        buff.append('|'.join(line) + '|')
-    buff.append(bar)
-    return '\n'.join(buff)
+                var_data_dict[vother] = "unknown"
+        correl_data.append(var_data_dict)
+
+    correl_table_str = tabulate(correl_data, headers="keys", tablefmt="simple_grid",
+                                disable_numparse=True)
+    return correl_table_str
 
 
 def params_html_table(params):

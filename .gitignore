@@ -28,3 +28,4 @@ examples/*.sav
 *htmlcov/*
 .eggs
 lmfit/version.py
+.venv/
